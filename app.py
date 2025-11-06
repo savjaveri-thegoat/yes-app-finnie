@@ -108,6 +108,22 @@ def ai_analyze_ticker(symbol, summary_text):
     return response.choices[0].message.content
 
 
+def ai_generate_insight(symbol, recent_return):
+    """Extra concise insight about the asset."""
+    prompt = f"""
+    You are Finnie, an AI investing assistant.
+    Give one short, high-level insight (1-2 sentences max) about {symbol}, 
+    based only on this info: 6-month return of {recent_return}%.
+    The tone should be analytical but friendly, with no financial advice.
+    """
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=150,
+    )
+    return response.choices[0].message.content
+
+
 def fetch_ticker_data(symbol):
     """More reliable data fetch using yfinance.history()"""
     try:
@@ -190,10 +206,16 @@ elif page == "Ticker Analysis":
                     fig.update_layout(template="plotly_dark", height=400)
                     st.plotly_chart(fig, use_container_width=True)
 
+                    # --- AI Analysis ---
                     summary_text = f"{symbol} 6-month return: {recent_return}% | Latest price: ${data[-1]:.2f}"
                     ai_analysis = ai_analyze_ticker(symbol, summary_text)
                     st.markdown("### AI Analysis")
                     st.markdown(f"<div class='result-box'>{ai_analysis}</div>", unsafe_allow_html=True)
+
+                    # --- NEW: AI Insight ---
+                    ai_insight = ai_generate_insight(symbol, recent_return)
+                    st.markdown("### Finnie Insight")
+                    st.markdown(f"<div class='result-box'>{ai_insight}</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.caption("Finnie is for educational use only. Not financial advice.")
