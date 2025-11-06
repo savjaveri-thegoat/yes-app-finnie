@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.express as px
-import requests
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Finnie", layout="wide")
@@ -85,18 +84,18 @@ def ai_generate_portfolio(goal_text):
     return response.choices[0].message.content
 
 
-def ai_analyze_ticker(symbol, market_data):
-    system_prompt = "You are Finnie, an educational AI assistant that analyzes financial assets in clear language."
+def ai_analyze_ticker(symbol, summary_text):
+    system_prompt = "You are Finnie, an educational AI assistant that analyzes financial assets in clear, friendly language."
     user_prompt = f"""
     Provide a short, easy-to-understand analysis for {symbol}.
     Use the market data below for context:
-    {market_data}
+    {summary_text}
     Include:
     1. Overview
     2. Key performance trends
     3. Risks / volatility factors
     4. Long-term outlook
-    Avoid any financial advice.
+    Avoid financial advice.
     """
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -110,15 +109,20 @@ def ai_analyze_ticker(symbol, market_data):
 
 
 def fetch_ticker_data(symbol):
-    data = None
+    """More reliable data fetch using yfinance.history()"""
     try:
-        data = yf.download(symbol, period="6mo")["Adj Close"].dropna()
-    except Exception:
-        pass
-    return data
+        ticker = yf.Ticker(symbol)
+        data = ticker.history(period="6mo")
+        if data.empty:
+            return None
+        return data["Close"]
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+        return None
 
 
 def summarize_ticker(symbol):
+    """Pulls basic ticker info for snapshot"""
     info = {}
     try:
         yft = yf.Ticker(symbol)
@@ -131,8 +135,8 @@ def summarize_ticker(symbol):
             "52W High": meta.get("fiftyTwoWeekHigh"),
             "52W Low": meta.get("fiftyTwoWeekLow"),
         }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Summary fetch error: {e}")
     return info
 
 
@@ -141,12 +145,20 @@ if page == "Portfolio Generator":
     st.title("Finnie: AI Portfolio Generator")
     st.markdown("Describe your investing goals, and Finnie will build a suggested stock and crypto portfolio.")
 
-    goal = st.text_area("Enter your goals:", height=120, placeholder="Example: I'm looking for moderate risk and long-term growth in tech and sustainable energy sectors.")
+    goal = st.text_area(
+        "Enter your goals:",
+        height=120,
+        placeholder="Example: I'm looking for moderate risk and long-term growth in tech and renewable energy.",
+    )
+
     if st.button("Generate Portfolio"):
-        with st.spinner("Generating your portfolio..."):
-            ai_response = ai_generate_portfolio(goal)
-            st.markdown("### Suggested Portfolio")
-            st.markdown(f"<div class='result-box'>{ai_response}</div>", unsafe_allow_html=True)
+        if goal.strip() == "":
+            st.error("Please describe your goals first.")
+        else:
+            with st.spinner("Generating your portfolio..."):
+                ai_response = ai_generate_portfolio(goal)
+                st.markdown("### Suggested Portfolio")
+                st.markdown(f"<div class='result-box'>{ai_response}</div>", unsafe_allow_html=True)
 
 # --- PAGE 2: TICKER ANALYSIS ---
 elif page == "Ticker Analysis":
@@ -155,26 +167,33 @@ elif page == "Ticker Analysis":
     symbol = st.text_input("Enter Ticker (e.g. AAPL, TSLA, BTC-USD):").upper()
 
     if st.button("Analyze"):
-        with st.spinner(f"Fetching and analyzing {symbol}..."):
-            data = fetch_ticker_data(symbol)
-            if data is None or data.empty:
-                st.error("Could not fetch price data. Try a different ticker.")
-            else:
-                info = summarize_ticker(symbol)
-                recent_return = round(((data[-1] / data[0]) - 1) * 100, 2)
-                st.markdown("### Market Snapshot")
-                st.dataframe(pd.DataFrame([info]).T.rename(columns={0: "Value"}))
+        if not symbol:
+            st.error("Please enter a ticker symbol.")
+        else:
+            with st.spinner(f"Fetching and analyzing {symbol}..."):
+                data = fetch_ticker_data(symbol)
+                if data is None or data.empty:
+                    st.error(f"Could not fetch data for {symbol}. Try again or check your connection.")
+                else:
+                    info = summarize_ticker(symbol)
+                    recent_return = round(((data[-1] / data[0]) - 1) * 100, 2)
 
-                st.markdown(f"**6-Month Return:** {recent_return}%")
-                st.markdown("### Price Trend")
-                fig = px.line(data, x=data.index, y=data.values, labels={"x": "Date", "y": "Price (USD)"})
-                fig.update_layout(template="plotly_dark", height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                    st.markdown("### Market Snapshot")
+                    if info:
+                        st.dataframe(pd.DataFrame([info]).T.rename(columns={0: "Value"}))
+                    else:
+                        st.info("No company info found for this ticker.")
 
-                summary_text = f"{symbol} 6-month return: {recent_return}% | Latest price: ${data[-1]:.2f}"
-                ai_analysis = ai_analyze_ticker(symbol, summary_text)
-                st.markdown("### AI Analysis")
-                st.markdown(f"<div class='result-box'>{ai_analysis}</div>", unsafe_allow_html=True)
+                    st.markdown(f"**6-Month Return:** {recent_return}%")
+                    st.markdown("### Price Trend")
+                    fig = px.line(data, x=data.index, y=data.values, labels={"x": "Date", "y": "Price (USD)"})
+                    fig.update_layout(template="plotly_dark", height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    summary_text = f"{symbol} 6-month return: {recent_return}% | Latest price: ${data[-1]:.2f}"
+                    ai_analysis = ai_analyze_ticker(symbol, summary_text)
+                    st.markdown("### AI Analysis")
+                    st.markdown(f"<div class='result-box'>{ai_analysis}</div>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.caption("Finnie is for educational use only. Not financial advice.")
