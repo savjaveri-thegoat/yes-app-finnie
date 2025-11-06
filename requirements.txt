@@ -1,5 +1,7 @@
 streamlit
 openai
 pandas
+numpy
 yfinance
 plotly
+requests
