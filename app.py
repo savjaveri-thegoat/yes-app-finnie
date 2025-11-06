@@ -1,265 +1,180 @@
-# app.py
 import streamlit as st
 from openai import OpenAI
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import requests
 import plotly.express as px
-from datetime import datetime, timedelta
+import requests
 
-# --- Page setup ---
-st.set_page_config(page_title="Finnie - AI Portfolio Builder", layout="wide", page_icon="💎")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Finnie", layout="wide")
 
-# Initialize OpenAI client with secret from Streamlit
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-
-# --- Styling (dark / cool) ---
+# --- STYLE ---
 st.markdown(
     """
     <style>
     [data-testid="stAppViewContainer"] {
-        background-color: #0b0f16;
-        color: #e0f2f1;
+        background: radial-gradient(circle at top left, #0a192f, #000000);
+        color: #E0F2F1;
         font-family: 'Inter', sans-serif;
     }
-    h1, h2, h3, h4 { color: #7dd3fc !important; }
-    .stButton>button { background-color: #2563eb; color: white; border-radius: 10px; }
-    .stButton>button:hover { background-color: #1d4ed8; }
-    .stTextInput>div>input { background: #071025; color: #e0f2f1; }
+    h1, h2, h3, h4, h5 { color: #7dd3fc; font-weight: 600; }
+    .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        padding-left: 3rem;
+        padding-right: 3rem;
+    }
+    .stTextInput>div>input, .stTextArea textarea {
+        background-color: #111827;
+        color: #e0f2f1;
+        border: 1px solid #1e3a8a;
+        border-radius: 8px;
+    }
+    .stButton>button {
+        background-color: #2563eb;
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 0.6em 1.2em;
+        font-weight: 600;
+        transition: 0.2s;
+    }
+    .stButton>button:hover {
+        background-color: #1e40af;
+        transform: scale(1.02);
+    }
+    .result-box {
+        background-color: #0f172a;
+        border-radius: 10px;
+        padding: 1rem;
+        border: 1px solid #1e3a8a;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# --- Header ---
-st.title("Finnie")
-st.caption("AI assistant that builds portfolios and provides ticker-level analysis.")
-st.divider()
+# --- INIT ---
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# --- Section 1: Goals -> Portfolio (existing feature) ---
-st.subheader("Generate a portfolio from your goals")
-goal = st.text_area(
-    "Describe your investing goals. Example: 'I want a moderate-risk portfolio focused on tech and clean energy, investing horizon 5 years.'",
-    height=100,
-)
+# --- SIDEBAR NAV ---
+st.sidebar.title("Finnie")
+page = st.sidebar.radio("Navigate", ["Portfolio Generator", "Ticker Analysis"])
+st.sidebar.markdown("---")
+st.sidebar.caption("Built for the Yale Entrepreneurial Society Fellowship")
 
-def get_portfolio_from_ai(goal_text: str) -> str:
-    system_msg = (
-        "You are Finnie, an AI investing assistant for student users. "
-        "Provide clear, educational, non-prescriptive portfolio suggestions."
-    )
-    prompt = (
-        f"Based on this goal: \"{goal_text}\", suggest a diversified portfolio with both stocks and crypto. "
-        "Provide 5-8 assets with percentage allocations that sum to 100%. "
-        "For each asset show: Ticker, Name, Type (Stock/Crypto), Allocation (%). "
-        "Then add a short 2-3 sentence rationale. Use a simple plain-text table or bullet list."
-    )
-    resp = client.chat.completions.create(
+# --- FUNCTIONS ---
+
+def ai_generate_portfolio(goal_text):
+    system_prompt = "You are Finnie, an AI investing assistant for beginner investors."
+    user_prompt = f"""
+    Based on this user's investing goals: "{goal_text}",
+    build a sample portfolio with 5–8 assets (stocks and crypto).
+    Include columns: Name, Ticker, Type (Stock/Crypto), and Allocation (%).
+    Ensure total allocation = 100%.
+    Finish with a short explanation of your reasoning.
+    """
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
-        max_tokens=600,
     )
-    return resp.choices[0].message.content
+    return response.choices[0].message.content
 
-def safe_extract_tickers(text: str):
-    # crude but practical extraction: uppercase words up to 5 chars or common crypto symbols
-    tickers = set()
-    for token in text.replace("|", " ").replace(",", " ").split():
-        tok = token.strip()
-        if tok.isupper() and 1 <= len(tok) <= 5:
-            tickers.add(tok)
-    # common crypto symbols are usually uppercase but sometimes not; still captured above
-    return list(tickers)
 
-if st.button("Generate Portfolio") and goal.strip():
-    with st.spinner("Building portfolio..."):
-        ai_output = get_portfolio_from_ai(goal)
-        st.markdown("### AI Portfolio Suggestion")
-        st.text(ai_output)
-
-        # show parsed table if possible
-        tickers = safe_extract_tickers(ai_output)
-        if tickers:
-            try:
-                prices = yf.download(tickers, period="5d")["Adj Close"].tail(1).T
-                price_df = prices.reset_index()
-                price_df.columns = ["Ticker", "Price (USD)"]
-                st.dataframe(price_df, use_container_width=True)
-            except Exception:
-                st.info("Could not fetch price snapshot for all tickers.")
-
-st.markdown("---")
-
-# --- Section 2: Ticker analysis (new feature) ---
-st.subheader("Ticker analysis")
-ticker_input = st.text_input("Enter a ticker (stock symbol like AAPL or crypto like BTC):", value="")
-
-def is_probable_crypto(ticker: str) -> bool:
-    # heuristic: common cryptos or if yfinance fails to return basic info
-    crypto_candidates = {"BTC", "ETH", "SOL", "ADA", "BNB", "DOGE", "DOT", "AVAX", "XRP", "LTC"}
-    return ticker.upper() in crypto_candidates
-
-def fetch_stock_data(ticker: str, days: int = 90):
-    try:
-        tk = ticker.upper()
-        data = yf.download(tk, period=f"{days}d", interval="1d")["Adj Close"].dropna()
-        info = yf.Ticker(tk).info
-        return data, info
-    except Exception:
-        return None, None
-
-def fetch_crypto_data_by_coingecko_id(cg_id: str, days: int = 90):
-    try:
-        url = f"https://api.coingecko.com/api/v3/coins/{cg_id}/market_chart"
-        params = {"vs_currency": "usd", "days": days}
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        result = r.json()
-        # result["prices"] = [ [timestamp, price], ... ]
-        prices = pd.DataFrame(result["prices"], columns=["ts", "price"])
-        prices["date"] = pd.to_datetime(prices["ts"], unit="ms")
-        prices = prices.set_index("date")["price"].resample("1D").mean().ffill()
-        return prices
-    except Exception:
-        return None
-
-def map_symbol_to_coingecko_id(symbol: str):
-    # a tiny mapping for common crypto tickers; extend as needed
-    mapping = {
-        "BTC": "bitcoin",
-        "ETH": "ethereum",
-        "SOL": "solana",
-        "ADA": "cardano",
-        "BNB": "binancecoin",
-        "DOGE": "dogecoin",
-        "DOT": "polkadot",
-        "AVAX": "avalanche-2",
-        "XRP": "ripple",
-        "LTC": "litecoin",
-    }
-    return mapping.get(symbol.upper())
-
-def compute_metrics(series: pd.Series):
-    series = series.dropna()
-    if series.empty:
-        return {}
-    latest = float(series.iloc[-1])
-    returns_30 = float((series.iloc[-1] / series.iloc[-31] - 1) * 100) if len(series) > 31 else None
-    returns_90 = float((series.iloc[-1] / series.iloc[0] - 1) * 100) if len(series) >= 2 else None
-    daily_ret = series.pct_change().dropna()
-    volatility_30 = float(daily_ret.tail(30).std() * np.sqrt(252) * 100) if len(daily_ret) >= 30 else None
-    return {
-        "latest_price": latest,
-        "return_30d_pct": returns_30,
-        "return_total_pct": returns_90,
-        "annualized_vol_pct": volatility_30,
-    }
-
-def get_ticker_analysis_with_ai(ticker_symbol: str, market_context: dict, extra_context: str = "") -> str:
-    system_msg = "You are Finnie, an educational AI investing assistant. Do not provide legal/financial advice. Provide clear, educational analysis with risk indicators."
-    prompt = (
-        f"Provide a detailed analysis for the ticker '{ticker_symbol}'.\n\n"
-        "Market data (use this to ground your analysis):\n"
-    )
-    for k, v in market_context.items():
-        prompt += f"- {k}: {v}\n"
-    if extra_context:
-        prompt += f"\nAdditional context:\n{extra_context}\n"
-    prompt += (
-        "\nPlease produce:\n"
-        "1) Brief summary (1-2 sentences)\n"
-        "2) Key drivers and catalysts\n"
-        "3) Risks / what to watch\n"
-        "4) Suggested time horizons that fit this asset type\n"
-        "5) A short non-prescriptive educational takeaway\n"
-    )
-
-    resp = client.chat.completions.create(
+def ai_analyze_ticker(symbol, market_data):
+    system_prompt = "You are Finnie, an educational AI assistant that analyzes financial assets in clear language."
+    user_prompt = f"""
+    Provide a short, easy-to-understand analysis for {symbol}.
+    Use the market data below for context:
+    {market_data}
+    Include:
+    1. Overview
+    2. Key performance trends
+    3. Risks / volatility factors
+    4. Long-term outlook
+    Avoid any financial advice.
+    """
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         max_tokens=700,
     )
-    return resp.choices[0].message.content
+    return response.choices[0].message.content
 
-if st.button("Analyze Ticker") and ticker_input.strip():
-    sym = ticker_input.strip().upper()
-    with st.spinner(f"Fetching market data for {sym}..."):
-        # Try as stock first
-        stock_series, stock_info = fetch_stock_data(sym, days=180)
-        if stock_series is not None and len(stock_series) >= 2:
-            metrics = compute_metrics(stock_series)
-            market_context = {
-                "Type": "Stock",
-                "Latest close (USD)": metrics.get("latest_price"),
-                "30-day return (%)": metrics.get("return_30d_pct"),
-                "90-day return (%)": metrics.get("return_total_pct"),
-                "Annualized volatility (%)": metrics.get("annualized_vol_pct"),
-                "Company shortName": stock_info.get("shortName") if isinstance(stock_info, dict) else None,
-                "Sector": stock_info.get("sector") if isinstance(stock_info, dict) else None,
-                "Market cap": stock_info.get("marketCap") if isinstance(stock_info, dict) else None,
-            }
-            st.markdown(f"### {sym} — Stock overview")
-            st.dataframe(pd.DataFrame([market_context]).T.rename(columns={0: "Value"}), use_container_width=True)
 
-            # Price chart
-            fig = px.line(stock_series.reset_index(), x="Date", y=sym if sym in stock_series.columns else stock_series.name,
-                          labels={"value": "Price (USD)"})
-            fig.update_layout(template="plotly_dark", height=350)
-            st.plotly_chart(fig, use_container_width=True)
+def fetch_ticker_data(symbol):
+    data = None
+    try:
+        data = yf.download(symbol, period="6mo")["Adj Close"].dropna()
+    except Exception:
+        pass
+    return data
 
-            # AI analysis
-            ai_analysis = get_ticker_analysis_with_ai(sym, market_context)
-            st.markdown("#### AI Analysis")
-            st.text(ai_analysis)
 
-        else:
-            # Try as crypto via CoinGecko mapping
-            cg_id = map_symbol_to_coingecko_id(sym)
-            if cg_id:
-                crypto_series = fetch_crypto_data_by_coingecko_id(cg_id, days=180)
-                if crypto_series is not None and len(crypto_series) >= 2:
-                    metrics = compute_metrics(crypto_series)
-                    market_context = {
-                        "Type": "Crypto",
-                        "CoinGecko id": cg_id,
-                        "Latest price (USD)": metrics.get("latest_price"),
-                        "30-day return (%)": metrics.get("return_30d_pct"),
-                        "180-day return (%)": metrics.get("return_total_pct"),
-                        "Annualized volatility (%)": metrics.get("annualized_vol_pct"),
-                    }
-                    st.markdown(f"### {sym} — Crypto overview")
-                    st.dataframe(pd.DataFrame([market_context]).T.rename(columns={0: "Value"}), use_container_width=True)
+def summarize_ticker(symbol):
+    info = {}
+    try:
+        yft = yf.Ticker(symbol)
+        meta = yft.info
+        info = {
+            "Company": meta.get("shortName"),
+            "Sector": meta.get("sector"),
+            "Market Cap": meta.get("marketCap"),
+            "PE Ratio": meta.get("trailingPE"),
+            "52W High": meta.get("fiftyTwoWeekHigh"),
+            "52W Low": meta.get("fiftyTwoWeekLow"),
+        }
+    except Exception:
+        pass
+    return info
 
-                    # Price chart
-                    fig = px.line(crypto_series.reset_index(), x="date", y="price", labels={"price": "Price (USD)", "date": "Date"})
-                    fig.update_layout(template="plotly_dark", height=350)
-                    st.plotly_chart(fig, use_container_width=True)
 
-                    ai_analysis = get_ticker_analysis_with_ai(sym, market_context)
-                    st.markdown("#### AI Analysis")
-                    st.text(ai_analysis)
-                else:
-                    st.error("Could not fetch crypto price series from CoinGecko.")
+# --- PAGE 1: PORTFOLIO GENERATOR ---
+if page == "Portfolio Generator":
+    st.title("Finnie: AI Portfolio Generator")
+    st.markdown("Describe your investing goals, and Finnie will build a suggested stock and crypto portfolio.")
+
+    goal = st.text_area("Enter your goals:", height=120, placeholder="Example: I'm looking for moderate risk and long-term growth in tech and sustainable energy sectors.")
+    if st.button("Generate Portfolio"):
+        with st.spinner("Generating your portfolio..."):
+            ai_response = ai_generate_portfolio(goal)
+            st.markdown("### Suggested Portfolio")
+            st.markdown(f"<div class='result-box'>{ai_response}</div>", unsafe_allow_html=True)
+
+# --- PAGE 2: TICKER ANALYSIS ---
+elif page == "Ticker Analysis":
+    st.title("Finnie: Ticker Analysis")
+    st.markdown("Enter a stock or crypto ticker to get AI insights and recent price data.")
+    symbol = st.text_input("Enter Ticker (e.g. AAPL, TSLA, BTC-USD):").upper()
+
+    if st.button("Analyze"):
+        with st.spinner(f"Fetching and analyzing {symbol}..."):
+            data = fetch_ticker_data(symbol)
+            if data is None or data.empty:
+                st.error("Could not fetch price data. Try a different ticker.")
             else:
-                # final attempt: try yfinance with appended suffixes (common for other exchanges)
-                st.error("Ticker not found as a US stock or recognized crypto symbol. Try a different ticker or use a common crypto (BTC, ETH).")
+                info = summarize_ticker(symbol)
+                recent_return = round(((data[-1] / data[0]) - 1) * 100, 2)
+                st.markdown("### Market Snapshot")
+                st.dataframe(pd.DataFrame([info]).T.rename(columns={0: "Value"}))
+
+                st.markdown(f"**6-Month Return:** {recent_return}%")
+                st.markdown("### Price Trend")
+                fig = px.line(data, x=data.index, y=data.values, labels={"x": "Date", "y": "Price (USD)"})
+                fig.update_layout(template="plotly_dark", height=400)
+                st.plotly_chart(fig, use_container_width=True)
+
+                summary_text = f"{symbol} 6-month return: {recent_return}% | Latest price: ${data[-1]:.2f}"
+                ai_analysis = ai_analyze_ticker(symbol, summary_text)
+                st.markdown("### AI Analysis")
+                st.markdown(f"<div class='result-box'>{ai_analysis}</div>", unsafe_allow_html=True)
 
 st.markdown("---")
-st.caption("Finnie provides educational analysis only. This is not financial advice.")
-
-# --- requirements note ---
-# Make sure your requirements.txt contains:
-# streamlit
-# openai
-# pandas
-# numpy
-# yfinance
-# plotly
-# requests
+st.caption("Finnie is for educational use only. Not financial advice.")
