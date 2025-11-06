@@ -5,13 +5,13 @@ import yfinance as yf
 import plotly.express as px
 
 # --- SETUP ---
-st.set_page_config(page_title="Finnie - AI Portfolio Builder", layout="wide", page_icon="💹")
+st.set_page_config(page_title="Finnie - AI Portfolio Builder", layout="wide", page_icon="💰")
 
 # Initialize OpenAI client
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # --- APP HEADER ---
-st.title("💹 Finnie")
+st.title("Finnie")
 st.caption("Your AI-powered investing buddy — generate a smart portfolio from your goals.")
 st.divider()
 
